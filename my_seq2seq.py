@@ -27,11 +27,13 @@ import tensorflow as tf
 try:
   linear = tf.nn.rnn_cell.linear
 except:
-  from tensorflow.python.ops.rnn_cell_impl import _linear as linear
+#  from tensorflow.python.ops.rnn_cell_impl import _linear as linear
+  from tensorflow.contrib.rnn.python.ops import core_rnn_cell
+  linear = core_rnn_cell._linear
 
 
 
- 
+
 def _extract_argmax_and_embed(embedding, output_projection=None,
                               update_embedding=True):
   """Get a loop_function that extracts the previous symbol and embeds it.
@@ -46,7 +48,7 @@ def _extract_argmax_and_embed(embedding, output_projection=None,
   """
   def loop_function(prev, _):
     if output_projection is not None:
-      prev = tf.xw_plus_b(
+      prev = tf.nn.xw_plus_b(
           prev, output_projection[0], output_projection[1])
     prev_symbol = tf.argmax(prev, 1)
     # Note that gradients will not propagate through the second parameter of
@@ -71,7 +73,7 @@ def _extract_beam_search(embedding, beam_size, num_symbols, embedding_size,  out
   """
   def loop_function(prev, i, log_beam_probs, beam_path, beam_symbols):
     if output_projection is not None:
-      prev = tf.xw_plus_b(
+      prev = tf.nn.xw_plus_b(
           prev, output_projection[0], output_projection[1])
     # prev= prev.get_shape().with_rank(2)[1]
 
@@ -199,7 +201,7 @@ def beam_rnn_decoder(decoder_inputs, initial_state, cell, loop_function=None,
                 states.append(state)
           state = tf.reshape(tf.concat(axis=0, values=states), [-1, state_size])
 
-      outputs.append(tf.argmax(tf.xw_plus_b(
+      outputs.append(tf.argmax(tf.nn.xw_plus_b(
           output, output_projection[0], output_projection[1]), axis=1))
   return outputs, state, tf.reshape(tf.concat(axis=0, values=beam_path),[-1,beam_size]), tf.reshape(tf.concat(axis=0, values=beam_symbols),[-1,beam_size])
 
@@ -462,7 +464,7 @@ def attention_decoder(decoder_inputs, initial_state, attention_states, cell,
 
       x = linear([inp]+attns, input_size, True)
       # Run the RNN.
-  
+
       cell_output, state = cell(x, state)
       # Run the attention mechanism.
       if i == 0 and initial_state_attention:
@@ -635,7 +637,7 @@ def beam_attention_decoder(decoder_inputs, initial_state, attention_states, cell
           with tf.variable_scope(tf.get_variable_scope(), reuse=True):
                 attns = attention(state)
 
-      outputs.append(tf.argmax(tf.xw_plus_b(
+      outputs.append(tf.argmax(tf.nn.xw_plus_b(
           output, output_projection[0], output_projection[1]), axis=1))
 
   return outputs, state, tf.reshape(tf.concat(axis=0, values=beam_path),[-1,beam_size]), tf.reshape(tf.concat(axis=0, values=beam_symbols),[-1,beam_size])
