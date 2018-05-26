@@ -8,7 +8,7 @@ This is seq2seq chatbot.
 
 ## Requirement
 python 3.5.2  
-Tensorflow r1.2  
+Tensorflow 1.6  
 Mecab  
 tweepy  
 
