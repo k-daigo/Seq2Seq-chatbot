@@ -698,8 +698,8 @@ def embedding_attention_decoder(decoder_inputs, initial_state, attention_states,
 
   with tf.variable_scope(scope or "embedding_attention_decoder"):
     with tf.device("/cpu:0"):
-      embedding = tf.get_variable("embedding",
-                                              [num_symbols, embedding_size])
+      embedding = tf.get_variable("embedding", [num_symbols, embedding_size])
+
     print("Check number of symbols")
     print(num_symbols)
     if beam_search:
@@ -710,15 +710,14 @@ def embedding_attention_decoder(decoder_inputs, initial_state, attention_states,
         loop_function = _extract_argmax_and_embed(
         embedding, output_projection,
         update_embedding_for_previous) if feed_previous else None
-    emb_inp = [
-        tf.nn.embedding_lookup(embedding, i) for i in decoder_inputs]
+    
+    emb_inp = [tf.nn.embedding_lookup(embedding, i) for i in decoder_inputs]
     if beam_search:
         return beam_attention_decoder(
             emb_inp, initial_state, attention_states, cell, output_size=output_size,
             num_heads=num_heads, loop_function=loop_function,
             initial_state_attention=initial_state_attention, output_projection=output_projection, beam_size=beam_size)
     else:
-
         return attention_decoder(
             emb_inp, initial_state, attention_states, cell, output_size=output_size,
             num_heads=num_heads, loop_function=loop_function,
@@ -778,10 +777,11 @@ def embedding_attention_seq2seq(encoder_inputs, decoder_inputs, cell_1,cell_2,
         encoder_cell, encoder_inputs,
         #scope='embedding_attention_decoder/attention_decoder',
         dtype=dtype)
+    
     print('####### embedding_attention_seq2seq scope: {}'.format(encoder_cell))
-    print("Symbols")
-    print(num_encoder_symbols)
-    print(num_decoder_symbols)
+    print("Symbols num_encoder_symbols={}".format(num_encoder_symbols))
+    print("Symbols num_decoder_symbols={}".format(num_decoder_symbols))
+
     # First calculate a concatenation of encoder outputs to put attention on.
     top_states = [tf.reshape(e, [-1, 1, cell_1.output_size])
                   for e in encoder_outputs]
@@ -799,8 +799,6 @@ def embedding_attention_seq2seq(encoder_inputs, decoder_inputs, cell_1,cell_2,
           output_size=output_size, output_projection=output_projection,
           feed_previous=feed_previous,
           initial_state_attention=initial_state_attention, beam_search=beam_search, beam_size=beam_size)
-
-
 
 
 def sequence_loss_by_example(logits, targets, weights,
@@ -862,7 +860,7 @@ def sequence_loss(logits, targets, weights,
   Raises:
     ValueError: If len(logits) is different from len(targets) or len(weights).
   """
-  with tf.name_scope( name, "sequence_loss",logits + targets + weights):
+  with tf.name_scope(name, "sequence_loss", logits + targets + weights):
     cost = tf.reduce_sum(sequence_loss_by_example(
         logits, targets, weights,
         average_across_timesteps=average_across_timesteps,
@@ -877,7 +875,7 @@ def sequence_loss(logits, targets, weights,
 def model_with_buckets(encoder_inputs, decoder_inputs, targets, weights,
                        buckets, seq2seq, softmax_loss_function=None,
                        per_example_loss=False, name=None):
-  """Create a sequence-to-sequence model with support for bucketing.
+  """ Create a sequence-to-sequence model with support for bucketing.
   The seq2seq argument is a function that defines a sequence-to-sequence model,
   e.g., seq2seq = lambda x, y: basic_rnn_seq2seq(x, y, rnn_cell.GRUCell(24))
   Args:
@@ -920,13 +918,14 @@ def model_with_buckets(encoder_inputs, decoder_inputs, targets, weights,
   outputs = []
   with tf.name_scope(name, "model_with_buckets", all_inputs):
     for j, bucket in enumerate(buckets):
+      # 2バケット以降はreuse
       with tf.variable_scope(tf.get_variable_scope(),
                                          reuse=True if j > 0 else None):
-
+        # 引数で指定されたseq2seqの関数を実行
         bucket_outputs, _ = seq2seq(encoder_inputs[:bucket[0]],
                                     decoder_inputs[:bucket[1]])
-
         outputs.append(bucket_outputs)
+
         if per_example_loss:
           losses.append(sequence_loss_by_example(
               outputs[-1], targets[:bucket[1]], weights[:bucket[1]],

@@ -17,24 +17,32 @@ class Seq2SeqModel(object):
         self.batch_size = batch_size
         self.learning_rate = tf.Variable(float(learning_rate), trainable = False)
         self.learning_rate_decay_op = self.learning_rate.assign(
-        self.learning_rate * learning_rate_decay_factor
-        )
+                self.learning_rate * learning_rate_decay_factor)
         self.global_step = tf.Variable(0, trainable=False)
 
         output_projection = None
         softmax_loss_function = None
 
+        # 初期のサンプル数より応答ボキャブラリのサイズが大きい場合は、リサイズする（TODO：なにを？なんで？）
         if num_samples > 0 and num_samples < self.target_vocab_size:
             with tf.device("/cpu:0"):
                 w = tf.get_variable("pro_w", [size, self.target_vocab_size])
-                w_t = tf.transpose(w)
+                w_t = tf.transpose(w)   # 転置したもの
                 b = tf.get_variable("proj_b", [self.target_vocab_size])
             output_projection = (w, b)
 
         def sampled_loss(inputs, labels):
+            """
+            ロス関数　文章系はシンボルが多くなるので、sampled_softmax_lossを返す
+            Args:
+                inputs: 
+                labels: 
+            Retuens: tf.nn.sampled_softmax_loss
+            """
+
             with tf.device("/cpu:0"):
                 labels = tf.reshape(labels, [-1,1])
-                return tf.nn.sampled_softmax_loss(w_t, b, labels, inputs, num_samples,self.target_vocab_size)
+                return tf.nn.sampled_softmax_loss(w_t, b, labels, inputs, num_samples, self.target_vocab_size)
         
         softmax_loss_function = sampled_loss
         
@@ -45,18 +53,22 @@ class Seq2SeqModel(object):
 
         def lstm_cell():
             return tf.contrib.rnn.BasicLSTMCell(size, reuse = tf.get_variable_scope().reuse)
+        
         single_cell = gru_cell
-
         if use_lstm:
             single_cell = lstm_cell
         cell = single_cell()
+
+        # Attention向けにCellをレイア分用意
         if num_layers > 1:
-            cell_1 = tf.contrib.rnn.MultiRNNCell([single_cell() for _ in range(num_layers)], state_is_tuple = False)
-            cell_2 = tf.contrib.rnn.MultiRNNCell([single_cell() for _ in range(num_layers)], state_is_tuple = False)
+            cell_1 = tf.contrib.rnn.MultiRNNCell([single_cell() for _ in range(num_layers)],
+                    state_is_tuple = False)
+            cell_2 = tf.contrib.rnn.MultiRNNCell([single_cell() for _ in range(num_layers)],
+                    state_is_tuple = False)
         
         # The seq2seq function: we use embedding for the input and attention.
         print('##### num_layers: {} #####'.format(num_layers))
-        print('##### {} #####'.format(output_projection))
+        print('##### output_projection: {} #####'.format(output_projection))
         def seq2seq_f(encoder_inputs, decoder_inputs, do_decode):
             if attention:
                 print("Attension Model")
@@ -89,7 +101,8 @@ class Seq2SeqModel(object):
                                                         name = "encoder{0}".format(i)))
         for i in range(buckets[-1][1] + 1):
             self.decoder_inputs.append(tf.placeholder(tf.int32, shape = [None],
-                                                        name = "encoder{0}".format(i)))
+#                                                        name = "encoder{0}".format(i)))
+                                                        name = "decoder{0}".format(i)))
             self.target_weights.append(tf.placeholder(tf.float32, shape = [None],
                                                         name = "weight{0}".format(i)))
         
@@ -104,12 +117,12 @@ class Seq2SeqModel(object):
                   self.target_weights, buckets, lambda x, y: seq2seq_f(x, y, True),
                   softmax_loss_function=softmax_loss_function)
             else:
-                  # print self.decoder_inputs
+                # print self.decoder_inputs
                 self.outputs, self.losses = model_with_buckets(
                   self.encoder_inputs, self.decoder_inputs, targets,
                   self.target_weights, buckets, lambda x, y: seq2seq_f(x, y, True),
                   softmax_loss_function=softmax_loss_function)
-              # If we use output projection, we need to project outputs for decoding.
+                # If we use output projection, we need to project outputs for decoding.
                 if output_projection is not None:
                     for b in xrange(len(buckets)):
                         self.outputs[b] = [
@@ -123,40 +136,53 @@ class Seq2SeqModel(object):
                 lambda x, y: seq2seq_f(x, y, False),
                 softmax_loss_function=softmax_loss_function)
 
-        # Gradients and SGD update operation for training the model.
+#        print("self.losses={}".format(self.losses))
+
+        # Gradients(勾配) and SGD(確率的勾配降下法) update operation for training the model.
+        # 変数を取得し、
         params = tf.trainable_variables()
         if not forward_only:
             self.gradient_norms = []
             self.updates = []
+
+            # 勾配降下法のオプティマイザ
             opt = tf.train.GradientDescentOptimizer(self.learning_rate)
             for b in xrange(len(buckets)):
+                # 勾配をクリップしないとうまく学習できないとのこと
                 gradients = tf.gradients(self.losses[b], params)
-                clipped_gradients, norm = tf.clip_by_global_norm(gradients,
-                                                                max_gradient_norm)
+                # クリッピングして（閾値以下に値を修正して）のノルムの大きさを抑える
+                clipped_gradients, norm = tf.clip_by_global_norm(gradients, max_gradient_norm)
                 self.gradient_norms.append(norm)
+                #print("self.gradient_norms={}".format(self.gradient_norms))
+
+                # 勾配を適用したOP（ノード）を用意
                 self.updates.append(opt.apply_gradients(
                     zip(clipped_gradients, params), global_step=self.global_step))
+                #print("self.updates={}".format(self.updates))
 
+        # パラメータ保存の準備
         self.saver = tf.train.Saver(tf.global_variables())
     
     def step(self, session, encoder_inputs, decoder_inputs, target_weights,
            bucket_id, forward_only, beam_search):
         """Run a step of the model feeding the given inputs.
         Args:
-        session: tensorflow session to use.
-        encoder_inputs: list of numpy int vectors to feed as encoder inputs.
-        decoder_inputs: list of numpy int vectors to feed as decoder inputs.
-        target_weights: list of numpy float vectors to feed as target weights.
-        bucket_id: which bucket of the model to use.
-        forward_only: whether to do the backward step or only forward.
+            session: tensorflow session to use.
+            encoder_inputs: list of numpy int vectors to feed as encoder inputs.
+            decoder_inputs: list of numpy int vectors to feed as decoder inputs.
+            target_weights: list of numpy float vectors to feed as target weights.
+            bucket_id: which bucket of the model to use.
+            forward_only: whether to do the backward step or only forward.
         Returns:
-        A triple consisting of gradient norm (or None if we did not do backward),
-        average perplexity, and the outputs.
+            A triple consisting of gradient norm (or None if we did not do backward),
+            average perplexity, and the outputs.
         Raises:
-        ValueError: if length of encoder_inputs, decoder_inputs, or
+        ValueError:
+            if length of encoder_inputs, decoder_inputs, or
             target_weights disagrees with bucket size for the specified bucket_id.
         """
         # Check if the sizes match.
+        # 配列のサイズチェック
         encoder_size, decoder_size = self.buckets[bucket_id]
         if len(encoder_inputs) != encoder_size:
             raise ValueError("Encoder length must be equal to the one in bucket,"
@@ -177,14 +203,18 @@ class Seq2SeqModel(object):
             input_feed[self.target_weights[l].name] = target_weights[l]
 
         # Since our targets are decoder inputs shifted by one, we need one more.
+        # 1つずつシフトされたデコーダ入力を得るため、ゼロ配列を1つ追加。
         last_target = self.decoder_inputs[decoder_size].name
         input_feed[last_target] = np.zeros([self.batch_size], dtype=np.int32)
 
         # Output feed: depends on whether we do a backward step or not.
+        # トレーニング時
         if not forward_only:
             output_feed = [self.updates[bucket_id],  # Update Op that does SGD.
+                                                    # SGDを適用したテンソル
                             self.gradient_norms[bucket_id],  # Gradient norm.
                             self.losses[bucket_id]]  # Loss for this batch.
+        # 予測時
         else:
             if beam_search:
                 output_feed = [self.beam_path[bucket_id]]  # Loss for this batch.
@@ -194,8 +224,13 @@ class Seq2SeqModel(object):
 
             for l in xrange(decoder_size):  # Output logits.
                 output_feed.append(self.outputs[bucket_id][l])
+
         # print bucket_id
+        #print("output_feed={}".format(output_feed))
+        #print("input_feed={}".format(input_feed))
         outputs = session.run(output_feed, input_feed)
+        #print("outputs={}".format(outputs))
+
         if not forward_only:
             return outputs[1], outputs[2], None  # Gradient norm, loss, no outputs.
         else:
@@ -205,39 +240,53 @@ class Seq2SeqModel(object):
                 return None, outputs[0], outputs[1:]  # No gradient norm, loss, outputs.
 
     def get_batch(self, data, bucket_id):
-        """Get a random batch of data from the specified bucket, prepare for step.
+        """
+        バッチデータを生成する
+        Get a random batch of data from the specified bucket, prepare for step.
         To feed data in step(..) it must be a list of batch-major vectors, while
         data here contains single length-major cases. So the main logic of this
         function is to re-index data cases to be in the proper format for feeding.
+        
         Args:
-        data: a tuple of size len(self.buckets) in which each element contains
-            lists of pairs of input and output data that we use to create a batch.
-        bucket_id: integer, which bucket to get the batch for.
+            data: a tuple of size len(self.buckets) in which each element contains
+                lists of pairs of input and output data that we use to create a batch.
+            bucket_id: integer, which bucket to get the batch for.
+        
         Returns:
-        The triple (encoder_inputs, decoder_inputs, target_weights) for
-        the constructed batch that has the proper format to call step(...) later.
+            The triple (encoder_inputs, decoder_inputs, target_weights) for
+            the constructed batch that has the proper format to call step(...) later.
         """
+
         encoder_size, decoder_size = self.buckets[bucket_id]
         encoder_inputs, decoder_inputs = [], []
 
         # Get a random batch of encoder and decoder inputs from data,
         # pad them if needed, reverse encoder inputs and add GO to decoder.
         for _ in xrange(self.batch_size):
+
+            # ランダムに要求、応答データをペアで取得
             encoder_input, decoder_input = random.choice(data[bucket_id])
 
             # Encoder inputs are padded and then reversed.
+            # 要求のデータ配列をPADで満たし、逆順にする（逆順の方が精度が良いらしい）
+            # そのデータをencoder_inputsに追加する（ランダムに選択されたデータをバッチサイズ分追加する）
             encoder_pad = [PAD_ID] * (encoder_size - len(encoder_input))
             encoder_inputs.append(list(reversed(encoder_input + encoder_pad)))
 
             # Decoder inputs get an extra "GO" symbol, and are padded then.
+            # 応答のデータ配列について、先頭にGO、末尾をPADで満たす
+            # そのデータをdecoder_inputsに追加する（ランダムに選択されたデータをバッチサイズ分追加する）
             decoder_pad_size = decoder_size - len(decoder_input) - 1
             decoder_inputs.append([GO_ID] + decoder_input +
                                     [PAD_ID] * decoder_pad_size)
+
+        #print("decoder_inputs={}".format(decoder_inputs))
 
         # Now we create batch-major vectors from the data selected above.
         batch_encoder_inputs, batch_decoder_inputs, batch_weights = [], [], []
 
         # Batch encoder inputs are just re-indexed encoder_inputs.
+        # 要求データの配列を反転（配列させると良好な結果を得られるととのこと）
         for length_idx in xrange(encoder_size):
             batch_encoder_inputs.append(
                 np.array([encoder_inputs[batch_idx][length_idx]
@@ -245,20 +294,26 @@ class Seq2SeqModel(object):
 
         # Batch decoder inputs are re-indexed decoder_inputs, we create weights.
         for length_idx in xrange(decoder_size):
+     
+            # 応答データの配列を反転（TODO：配列を反転させているだけ？なんで？）
             batch_decoder_inputs.append(
                 np.array([decoder_inputs[batch_idx][length_idx]
                             for batch_idx in xrange(self.batch_size)], dtype=np.int32))
 
-        # Create target_weights to be 0 for targets that are padding.
+            # Create target_weights to be 0 for targets that are padding.
+            # 初期値1の配列をバッチサイズで準備
             batch_weight = np.ones(self.batch_size, dtype=np.float32)
             for batch_idx in xrange(self.batch_size):
                 # We set weight to 0 if the corresponding target is a PAD symbol.
                 # The corresponding target is decoder_input shifted by 1 forward.
+                # 末尾以外のデータは1こ後方にずらして、それをtargetにする（TODO:先頭はGOだから？）
                 if length_idx < decoder_size - 1:
                     target = decoder_inputs[batch_idx][length_idx + 1]
+                
+                # 末尾、またはPADのデータは0（それ以外は初期値の1のまま）
                 if length_idx == decoder_size - 1 or target == PAD_ID:
                     batch_weight[batch_idx] = 0.0
+
             batch_weights.append(batch_weight)
+
         return batch_encoder_inputs, batch_decoder_inputs, batch_weights
-
-
