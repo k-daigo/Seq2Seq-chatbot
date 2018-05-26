@@ -4,7 +4,7 @@ Seq2Seq chatbot (ja)
 Overview
 
 ## Description
-This is seq2seq chatbot.
+This is seq2seq chatbot.  
 wataruhashimoto52さんのコードをベースにTensorflowを利用したチャットボットの理解を進めるためのものです。
 
 ## Requirement
