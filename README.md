@@ -5,6 +5,7 @@ Overview
 
 ## Description
 This is seq2seq chatbot.
+wataruhashimoto52さんのコードをベースにTensorflowを利用したチャットボットの理解を進めるためのものです。
 
 ## Requirement
 python 3.5.2  
